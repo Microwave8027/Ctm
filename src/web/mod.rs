@@ -1,6 +1,8 @@
 mod api;
 mod auth;
+mod claude;
 mod components;
+mod forms;
 mod pages;
 
 use std::sync::Arc;
@@ -13,9 +15,11 @@ use axum::{
 };
 
 use crate::{
+    claude_auth::ClaudeAuth,
     config::Config,
-    db::{Db, Run, RunSpec},
+    db::{Agent, Db, Run, RunOrigin, RunSpec},
     executor::Executor,
+    jobs::{self, Trigger},
 };
 
 #[derive(Clone)]
@@ -23,12 +27,32 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     pub db: Db,
     pub exec: Arc<Executor>,
+    pub auth: Arc<ClaudeAuth>,
 }
 
 impl AppState {
-    /// Creates and queues a run.
-    pub async fn submit(&self, spec: RunSpec, task_id: Option<i64>) -> anyhow::Result<Run> {
-        let run = self.db.create_run(spec, task_id, None).await?;
+    /// Creates and queues an ad-hoc run.
+    pub async fn submit(&self, spec: RunSpec) -> Result<Run, AppError> {
+        let run = self
+            .db
+            .create_run(spec, RunOrigin::default())
+            .await
+            .map_err(AppError::bad_request)?;
+        self.exec.enqueue(run.id);
+        Ok(run)
+    }
+
+    /// Runs an agent once with `prompt`.
+    pub async fn run_agent(&self, agent: &Agent, prompt: String) -> Result<Run, AppError> {
+        let origin = RunOrigin {
+            agent: Some(agent),
+            ..Default::default()
+        };
+        let run = self
+            .db
+            .create_run(agent.spec(prompt, None), origin)
+            .await
+            .map_err(AppError::bad_request)?;
         self.exec.enqueue(run.id);
         Ok(run)
     }
@@ -40,40 +64,68 @@ impl AppState {
             .get_run(parent_id)
             .await?
             .ok_or(AppError::not_found("run"))?;
+        if parent.session_id.is_none() {
+            return Err(AppError::bad_request("that run has no session to continue"));
+        }
         let spec = RunSpec {
             prompt,
-            mode: parent.mode,
-            image: parent.image.clone(),
-            repo: parent.repo.clone(),
-            model: parent.model.clone(),
-            extra_args: parent.extra_args.clone(),
+            ..parent.spec()
+        };
+        let origin = RunOrigin {
+            parent: Some(&parent),
+            ..Default::default()
         };
         let run = self
             .db
-            .create_run(spec, None, Some(&parent))
+            .create_run(spec, origin)
             .await
             .map_err(AppError::bad_request)?;
         self.exec.enqueue(run.id);
         Ok(run)
     }
 
-    pub async fn trigger_task(&self, task_id: i64) -> Result<Run, AppError> {
-        let task = self
+    /// Re-runs a finished run's prompt with the same settings.
+    pub async fn rerun(&self, id: i64) -> Result<Run, AppError> {
+        let run = self
             .db
-            .get_task(task_id)
+            .get_run(id)
             .await?
-            .ok_or(AppError::not_found("task"))?;
-        let run = self.submit(task.spec(), Some(task.id)).await?;
-        self.db
-            .set_task_schedule(task.id, Some(run.created_at), task.next_run_at)
-            .await?;
-        Ok(run)
+            .ok_or(AppError::not_found("run"))?;
+        let agent = match run.agent_id {
+            Some(a) => self.db.get_agent(a).await?,
+            None => None,
+        };
+        let origin = RunOrigin {
+            agent: agent.as_ref(),
+            job_id: run.job_id,
+            ..Default::default()
+        };
+        let new = self
+            .db
+            .create_run(run.spec(), origin)
+            .await
+            .map_err(AppError::bad_request)?;
+        self.exec.enqueue(new.id);
+        Ok(new)
+    }
+
+    pub async fn trigger_job(&self, job_id: i64) -> Result<Run, AppError> {
+        let job = self
+            .db
+            .get_job(job_id)
+            .await?
+            .ok_or(AppError::not_found("job"))?;
+        jobs::fire_job(&self.db, &self.exec, &job, Trigger::Manual)
+            .await
+            .map_err(AppError::bad_request)?
+            .ok_or_else(|| AppError::bad_request("the job's overlap policy skipped this run"))
     }
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(pages::routes())
+        .merge(claude::routes())
         .nest("/api", api::routes())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),

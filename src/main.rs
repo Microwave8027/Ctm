@@ -1,8 +1,11 @@
+mod claude_auth;
 mod cli;
 mod config;
 mod db;
 mod executor;
-mod scheduler;
+mod jobs;
+mod pty;
+mod schedule;
 mod web;
 
 use std::{sync::Arc, time::Duration};
@@ -54,10 +57,18 @@ async fn serve(cfg: config::Config) -> Result<()> {
         );
     }
     tokio::fs::create_dir_all(&cfg.data_dir).await?;
+    #[cfg(unix)]
+    {
+        // The data dir holds Claude credentials; keep it private.
+        use std::os::unix::fs::PermissionsExt;
+        let _ =
+            tokio::fs::set_permissions(&cfg.data_dir, std::fs::Permissions::from_mode(0o700)).await;
+    }
     let cfg = Arc::new(cfg);
     let db = db::Db::open(&cfg.db_path()).await?;
-    let exec = executor::Executor::start(cfg.clone(), db.clone()).await?;
-    scheduler::spawn(
+    let auth = Arc::new(claude_auth::ClaudeAuth::new(cfg.clone(), db.clone()));
+    let exec = executor::Executor::start(cfg.clone(), db.clone(), auth.clone()).await?;
+    jobs::spawn_scheduler(
         db.clone(),
         exec.clone(),
         Duration::from_secs(cfg.scheduler_tick.max(1)),
@@ -67,6 +78,7 @@ async fn serve(cfg: config::Config) -> Result<()> {
         cfg: cfg.clone(),
         db,
         exec,
+        auth,
     });
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     tracing::info!("ctm listening on http://{}", listener.local_addr()?);
