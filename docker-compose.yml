@@ -14,9 +14,12 @@ services:
     image: ctm:latest
     restart: unless-stopped
     ports:
-      - "7878:7878"
+      # Localhost only by default. To expose ctm on your network, set
+      # CTM_TOKEN (the dashboard then asks for it) and change this to
+      # "7878:7878", ideally behind TLS.
+      - "127.0.0.1:7878:7878"
     environment:
-      CTM_TOKEN: ${CTM_TOKEN:?set CTM_TOKEN in .env}
+      CTM_TOKEN: ${CTM_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       GH_TOKEN: ${GH_TOKEN:-}

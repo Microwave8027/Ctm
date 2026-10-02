@@ -49,7 +49,9 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn serve(cfg: config::Config) -> Result<()> {
+async fn serve(mut cfg: config::Config) -> Result<()> {
+    // `CTM_TOKEN=` (empty, e.g. from an unset compose variable) means no login.
+    cfg.token = cfg.token.filter(|t| !t.trim().is_empty());
     if cfg.token.is_none() && !cfg.bind.ip().is_loopback() {
         tracing::warn!(
             "CTM_TOKEN is not set and ctm is listening on {} — anyone who can reach it can run Claude",

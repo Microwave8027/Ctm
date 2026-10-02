@@ -64,13 +64,15 @@ Open **Claude account** in the dashboard and sign in, or run
 ## Quick start (Docker)
 
 ```sh
-cp .env.example .env     # set CTM_TOKEN (Claude credentials are optional)
+cp .env.example .env     # optional: CTM_TOKEN, Claude credentials
 docker compose build     # builds ctm:latest and ctm-runner:latest
 docker compose up -d ctm
 ```
 
-Open http://localhost:7878, log in with `CTM_TOKEN`, then sign in to Claude
-under **Claude account**. The compose file mounts the host's Docker socket so
+Open http://localhost:7878 and sign in to Claude under **Claude account**.
+By default the port is published on `127.0.0.1` only and there is no ctm
+login. If you set `CTM_TOKEN`, the dashboard asks for it once (it's kept in
+a cookie). Set it before exposing the port beyond localhost. The compose file mounts the host's Docker socket so
 the server can start sibling `ctm-runner` containers for docker-mode runs.
 Credentials and Claude's own config live in the `ctm-data` volume.
 
@@ -196,7 +198,7 @@ variable:
 |---|---|---|
 | `CTM_BIND` | `127.0.0.1:7878` | listen address (the image uses `0.0.0.0:7878`) |
 | `CTM_DATA_DIR` | `./ctm-data` | SQLite DB, logs, workspaces, managed Claude config |
-| `CTM_TOKEN` | unset | shared secret for dashboard/API; **set this when exposed beyond localhost** |
+| `CTM_TOKEN` | unset | password for the dashboard/API; unset or empty means no login. **Set it when exposed beyond localhost** |
 | `CTM_MAX_CONCURRENT` | `4` | parallel runs |
 | `CTM_CLAUDE_BIN` | `claude` | Claude CLI for local and cloud runs and sign-in |
 | `CTM_CLAUDE_ARGS` | `--output-format stream-json --verbose` | base args for `-p` runs |
