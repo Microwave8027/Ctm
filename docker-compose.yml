@@ -1,0 +1,32 @@
+services:
+  # Builds the sandbox image used for docker-mode runs. It exits right away;
+  # it's here so `docker compose build` produces ctm-runner:latest.
+  runner-image:
+    build:
+      context: docker
+      dockerfile: runner.Dockerfile
+    image: ctm-runner:latest
+    entrypoint: ["true"]
+    restart: "no"
+
+  ctm:
+    build: .
+    image: ctm:latest
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    environment:
+      CTM_TOKEN: ${CTM_TOKEN:?set CTM_TOKEN in .env}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      CTM_MAX_CONCURRENT: ${CTM_MAX_CONCURRENT:-4}
+      CTM_DOCKER_IMAGE: ctm-runner:latest
+    volumes:
+      - ctm-data:/data
+      # Lets ctm start sibling containers for docker-mode runs. This is
+      # root-equivalent access to the host; see README "Security".
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  ctm-data:
